@@ -20,6 +20,10 @@ init_koha_setup_env() {
   : "${TZ:=${KOHA_TIMEZONE:-Europe/Kyiv}}"
   export TZ
 
+  : "${USE_MEMCACHED:=yes}"
+  : "${MEMCACHED_SERVERS:=memcached:11211}"
+  export USE_MEMCACHED MEMCACHED_SERVERS
+
   : "${USE_ELASTICSEARCH:=false}"
   : "${ELASTICSEARCH_HOST:=elasticsearch}"
   export USE_ELASTICSEARCH ELASTICSEARCH_HOST

@@ -1,0 +1,2 @@
+ARG MEMCACHED_VERSION=1.6
+FROM docker.io/memcached:${MEMCACHED_VERSION}

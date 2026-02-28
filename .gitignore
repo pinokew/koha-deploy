@@ -8,3 +8,5 @@ koha_data_backup.sql
 # Ігнорувати папку з даними RabbitMQ (якщо є)
 rabbitmq_plugins
 files/docker/templates
+
+archive/

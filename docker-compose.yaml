@@ -1,157 +1,160 @@
 services:
   koha:
-    container_name: koha-app
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        # Передаємо лише номер версії (напр., 25.05) у Dockerfile
-        KOHA_VERSION: ${KOHA_IMAGE_TAG}
-    image: ${KOHA_IMAGE_NAME}:${KOHA_IMAGE_TAG}
+    image: ${KOHA_IMAGE}
+    restart: unless-stopped
     ports:
-      - "8080:8080" # OPAC
-      - "8081:8081" # Staff
+      - "${KOHA_OPAC_PORT:-8080}:${KOHA_OPAC_PORT:-8080}"
+      - "${KOHA_INTRANET_PORT:-8081}:${KOHA_INTRANET_PORT:-8081}"
     networks:
       - kohanet
     cap_add:
       - DAC_READ_SEARCH
       - SYS_NICE
     environment:
-      # --- ПІДКЛЮЧЕННЯ ДО БАЗИ (МАЄ СПІВПАСТИ З db) ---
-      MYSQL_SERVER: db
+      MYSQL_SERVER: ${DB_HOST:-db}
       MYSQL_USER: ${DB_USER}
       MYSQL_PASSWORD: ${DB_PASS}
       DB_NAME: ${DB_NAME}
+      DB_ROOT_PASS: ${DB_ROOT_PASS}
 
-      # (опціонально, але не завадить явно)
-      DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT}
-
-      # --- Koha ---
       KOHA_INSTANCE: ${KOHA_INSTANCE}
       KOHA_DOMAIN: ${KOHA_DOMAIN}
-      MEMCACHED_SERVERS: memcached:11211
-      USE_ELASTICSEARCH: "true"
-      ELASTICSEARCH_HOST: es:9200
-
-      # Мова/часова зона з .env
+      KOHA_CONF: /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
+      KOHA_OPAC_PORT: ${KOHA_OPAC_PORT}
+      KOHA_INTRANET_PORT: ${KOHA_INTRANET_PORT}
+      KOHA_OPAC_PREFIX: ${KOHA_OPAC_PREFIX:-}
+      KOHA_OPAC_SUFFIX: ${KOHA_OPAC_SUFFIX:-}
+      KOHA_INTRANET_PREFIX: ${KOHA_INTRANET_PREFIX:-}
+      KOHA_INTRANET_SUFFIX: ${KOHA_INTRANET_SUFFIX:--intra}
+      KOHA_OPAC_SERVERNAME: ${KOHA_OPAC_SERVERNAME:-}
+      KOHA_INTRANET_SERVERNAME: ${KOHA_INTRANET_SERVERNAME:-}
       TZ: ${KOHA_TIMEZONE}
-      KOHA_LANGS: ${KOHA_LANGS}
+      KOHA_LANGS: ${KOHA_LANGS:-}
 
-      # --- RabbitMQ: ті ж значення, що й у сервісі rabbitmq ---
-      MB_HOST: rabbitmq
-      MB_PORT: 61613
+      MB_HOST: ${MB_HOST:-rabbitmq}
+      MB_PORT: ${MB_PORT:-61613}
       MB_USER: ${RABBITMQ_USER}
       MB_PASS: ${RABBITMQ_PASS}
 
-      # KOHA_CONF я б не задавав тут вручну — нехай імідж/koha-shell сам керує
-      # Якщо дуже треба, то краще глобальний:
-      # KOHA_CONF: /etc/koha/koha-conf.xml
+      USE_ELASTICSEARCH: ${USE_ELASTICSEARCH:-true}
+      ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-es:9200}
+      MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
 
-      # root-пароль БД Koha сама напряму не використовує, але можна лишити,
-      # якщо твій entrypoint його читає
-      DB_ROOT_PASS: ${DB_ROOT_PASS}
-
+      KOHA_SETUP_FAIL_FAST: ${KOHA_SETUP_FAIL_FAST:-false}
+      KOHA_SETUP_REQUIRED_STEPS: ${KOHA_SETUP_REQUIRED_STEPS:-00-env-checks.sh}
+      KOHA_SETUP_SKIP_STEPS: ${KOHA_SETUP_SKIP_STEPS:-}
+      KOHA_SETUP_ONLY_STEPS: ${KOHA_SETUP_ONLY_STEPS:-}
     depends_on:
       db:
         condition: service_healthy
       rabbitmq:
-        condition: service_started
+        condition: service_healthy
       memcached:
         condition: service_started
       es:
         condition: service_healthy
-    restart: always
     volumes:
       - ${VOL_KOHA_CONF}:/etc/koha/sites
+      - ${VOL_KOHA_CONF}/${KOHA_INSTANCE}:/etc/koha/sites/default
       - ${VOL_KOHA_DATA}:/var/lib/koha
       - ${VOL_KOHA_LOGS}:/var/log/koha
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8081 || exit 1"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:${KOHA_INTRANET_PORT:-8081} || exit 1"]
+      interval: 15s
+      timeout: 5s
       retries: 5
-      start_period: 60s
-
-  rabbitmq:
-    container_name: koha-rabbitmq
-    build: ./rabbitmq  
-    image: koha-local-rabbitmq 
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
-    networks:
-      - kohanet
-    restart: always
+      start_period: 20s
 
   db:
-    container_name: koha-db
-    image: docker.io/mariadb:11
+    image: ${MARIADB_IMAGE:-docker.io/mariadb:11}
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
-    volumes:
-      - ${VOL_DB_PATH}:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - kohanet
     environment:
       MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASS}
       MARIADB_DATABASE: ${DB_NAME}
       MARIADB_USER: ${DB_USER}
       MARIADB_PASSWORD: ${DB_PASS}
       TZ: ${KOHA_TIMEZONE}
-    networks:
-      - kohanet
-    restart: always
+    volumes:
+      - ${VOL_DB_PATH}:/var/lib/mysql
     healthcheck:
-      # Використовуємо змінні середовища всередині контейнера MariaDB
-      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u$$MARIADB_USER -p$$MARIADB_PASSWORD || exit 1"]
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -uroot -p$$MARIADB_ROOT_PASSWORD || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
       start_period: 90s
 
-  es:
-    container_name: koha-es
+  rabbitmq:
     build:
-      context: .
-      dockerfile: elasticsearch/Dockerfile
-    image: my-local-es:8.19.6
-    environment:
-      - "discovery.type=single-node"
-      - "xpack.security.enabled=false"
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-      - "TZ=${KOHA_TIMEZONE}"
+      context: ./rabbitmq
+      dockerfile: Dockerfile
+      args:
+        RABBITMQ_VERSION: ${RABBITMQ_VERSION:-3-management}
+    image: ${RABBITMQ_IMAGE:-koha-local-rabbitmq:3-management}
+    restart: unless-stopped
     networks:
       - kohanet
-    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  es:
+    build:
+      context: ./elasticsearch
+      dockerfile: Dockerfile
+      args:
+        ES_VERSION: ${ES_VERSION:-8.19.6}
+    image: ${ES_IMAGE:-koha-local-es:8.19.6}
+    restart: unless-stopped
+    networks:
+      - kohanet
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      TZ: ${KOHA_TIMEZONE}
+    volumes:
+      - ${VOL_ES_PATH}:/usr/share/elasticsearch/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9200"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
       start_period: 120s
-    volumes:
-      - ${VOL_ES_PATH}:/usr/share/elasticsearch/data
 
   memcached:
-    container_name: koha-memcached   
-    image: docker.io/memcached
+    build:
+      context: ./memcached
+      dockerfile: Dockerfile
+      args:
+        MEMCACHED_VERSION: ${MEMCACHED_VERSION:-1.6}
+    image: ${MEMCACHED_IMAGE:-koha-local-memcached:1.6}
+    restart: unless-stopped
     networks:
       - kohanet
-    restart: always
-  
+
   tunnel:
-    image: cloudflare/cloudflared:latest
-    container_name: koha_tunnel
-    restart: always
+    image: ${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:2026.2.0}
+    # profiles: ["tunnel"]
+    restart: unless-stopped
     networks:
       - kohanet
     environment:
-      - TUNNEL_TOKEN=${CLOUDFLARE_TOKEN}
+      TUNNEL_TOKEN: ${CLOUDFLARE_TOKEN}
     command: tunnel run
     depends_on:
       koha:
         condition: service_healthy
- 
+
 networks:
   kohanet:
     driver: bridge

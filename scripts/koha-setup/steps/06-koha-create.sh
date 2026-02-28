@@ -26,3 +26,13 @@ if [ "${KOHA_CREATE_RC}" -ne 0 ]; then
   echo "WARNING: koha-create failed with code ${KOHA_CREATE_RC}"
   exit "${KOHA_CREATE_RC}"
 fi
+
+# Keep s6 envdir aligned with the active instance config path.
+echo "${KOHA_INSTANCE}" >/etc/koha-envvars/INSTANCE_NAME
+echo "/etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml" >/etc/koha-envvars/KOHA_CONF
+
+KOHA_CONF_PATH="/etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml"
+if [ "${USE_MEMCACHED}" != "no" ] && [ -f "${KOHA_CONF_PATH}" ]; then
+  esc_memcached_servers="$(printf '%s' "${MEMCACHED_SERVERS}" | sed 's/[\\/&]/\\\\&/g')"
+  sed -Ei "s#(<memcached_servers>).*?(</memcached_servers>)#\\1${esc_memcached_servers}\\2#" "${KOHA_CONF_PATH}" || true
+fi
