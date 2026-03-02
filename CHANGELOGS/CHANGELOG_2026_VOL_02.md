@@ -118,3 +118,22 @@
 - Перевірено:
   - `actionlint .github/workflows/ci-cd-checks.yml` проходить без помилок.
   - Примітка: окремий файл `build-and-push.yml` має власну pre-existing синтаксичну проблему (`uses: *trivy_action`) і потребує окремого виправлення.
+
+### 6) CI fix: `shellcheck` fail у `ci-checks`
+
+- Виправлено зауваження `shellcheck` у скриптах:
+  - [backup.sh](/home/pinokew/Koha/koha-deploy/scripts/backup.sh)
+    - `SC2053`: у `[[ ... == ... ]]` RHS зроблено quoted для точного match.
+    - `SC2094`: генерація `SHA256SUMS` через тимчасовий файл + `mv`.
+    - `SC2028`: заголовок маніфесту переведено з `echo` на `printf`.
+  - [restore.sh](/home/pinokew/Koha/koha-deploy/scripts/restore.sh)
+    - `SC2002`: прибрано `cat |`, імпорт SQL через input redirection.
+    - `SC1091`: додано explicit directive для `pitr_master_status.env`.
+    - `SC2086`: прибрано `awk '$0 >= s'` конструкцію, замінено на безпечний POSIX-цикл фільтрації binlog-файлів.
+  - [patch-koha-templates.sh](/home/pinokew/Koha/koha-deploy/scripts/patch-koha-templates.sh)
+    - `SC1090`: додано `shellcheck disable` directive для динамічного `.env` source.
+
+- Перевірено:
+  - запуском тієї ж команди, що в CI:
+    - `docker run ... koalaman/shellcheck:v0.10.0 -x <scripts>`
+  - результат: exit code `0` (помилки/попередження, що падали пайплайн, усунуті).

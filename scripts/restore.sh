@@ -192,9 +192,9 @@ import_sql_dump() {
       mariadb -uroot -p"${DB_ROOT_PASS}" "${DB_NAME}"
     '
   else
-    cat "${SQL_DUMP_FILE}" | docker compose exec -T -e DB_ROOT_PASS="${DB_ROOT_PASS}" -e DB_NAME="${DB_NAME}" db sh -ec '
+    docker compose exec -T -e DB_ROOT_PASS="${DB_ROOT_PASS}" -e DB_NAME="${DB_NAME}" db sh -ec '
       mariadb -uroot -p"${DB_ROOT_PASS}" "${DB_NAME}"
-    '
+    ' < "${SQL_DUMP_FILE}"
   fi
 }
 
@@ -213,7 +213,7 @@ apply_pitr() {
   local start_file=""
   local start_pos=""
   if [ -f "${RESTORE_SOURCE_DIR}/pitr_master_status.env" ]; then
-    # shellcheck disable=SC1090
+    # shellcheck disable=SC1090,SC1091
     . "${RESTORE_SOURCE_DIR}/pitr_master_status.env" || true
     start_file="${PITR_START_FILE:-}"
     start_pos="${PITR_START_POS:-}"
@@ -242,7 +242,17 @@ apply_pitr() {
 
       selected="${all_files}"
       if [ -n "${PITR_START_FILE}" ] && [ -f "/tmp/koha-pitr-binlogs/${PITR_START_FILE}" ]; then
-        selected="$(printf "%s\\n" ${all_files} | awk -v s="/tmp/koha-pitr-binlogs/${PITR_START_FILE}" '$0 >= s')"
+        selected=""
+        start_path="/tmp/koha-pitr-binlogs/${PITR_START_FILE}"
+        while IFS= read -r binlog_file; do
+          [ -n "${binlog_file}" ] || continue
+          if [ "${binlog_file}" \< "${start_path}" ]; then
+            continue
+          fi
+          selected="${selected}${selected:+ }${binlog_file}"
+        done <<EOF
+${all_files}
+EOF
       fi
 
       [ -n "${selected}" ] || { echo "No binlogs selected for PITR" >&2; exit 1; }

@@ -53,7 +53,7 @@ should_exclude_offsite_file() {
   IFS=',' read -r -a OFFSITE_EXCLUDE_PATTERNS <<< "${csv}"
   for pattern in "${OFFSITE_EXCLUDE_PATTERNS[@]}"; do
     [ -n "${pattern}" ] || continue
-    if [[ "${filename}" == ${pattern} ]]; then
+    if [[ "${filename}" == "${pattern}" ]]; then
       return 0
     fi
   done
@@ -137,9 +137,12 @@ verify_backup_artifacts() {
 
   (
     cd "${WORK_DIR}"
+    local sums_file_tmp
+    sums_file_tmp="$(mktemp SHA256SUMS.XXXXXX)"
     find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
       | sort -z \
-      | xargs -0 -r sha256sum > SHA256SUMS
+      | xargs -0 -r sha256sum > "${sums_file_tmp}"
+    mv "${sums_file_tmp}" SHA256SUMS
     sha256sum -c SHA256SUMS >/dev/null
   )
 }
@@ -159,7 +162,7 @@ BACKUP_TOOL_VERSION=2
 META
 
   {
-    echo "File\tSizeBytes"
+    printf 'File\tSizeBytes\n'
     find "${WORK_DIR}" -maxdepth 1 -type f -printf "%f\t%s\n" | sort
   } >"${WORK_DIR}/backup_manifest.tsv"
 }

@@ -14,6 +14,7 @@ if [ -f "$ENV_FILE" ]; then
     echo "🔄 Завантажую змінні..."
     # set -a автоматично робить всі змінні, що ми завантажимо, доступними (export)
     set -a
+    # shellcheck disable=SC1090
     . "$ENV_FILE"
     set +a
 else
