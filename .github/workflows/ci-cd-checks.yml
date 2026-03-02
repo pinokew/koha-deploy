@@ -249,6 +249,8 @@ jobs:
         run: |
           set -euo pipefail
           log_file="trivy-images.log"
+          cache_dir="$PWD/.trivy-cache"
+          mkdir -p "${cache_dir}"
           : > "${log_file}"
           overall_rc=0
           images=(
@@ -264,7 +266,10 @@ jobs:
             set +e
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
-              "${TRIVY_IMAGE}" image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "${image}" 2>&1 | tee -a "${log_file}"
+              -v "$PWD:/work" \
+              -v "${cache_dir}:/trivy-cache" \
+              -w /work \
+              "${TRIVY_IMAGE}" image --scanners vuln --cache-dir /trivy-cache --ignorefile /work/.trivyignore.yaml --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "${image}" 2>&1 | tee -a "${log_file}"
             scan_rc=${PIPESTATUS[0]}
             set -e
             if [ "${scan_rc}" -ne 0 ]; then

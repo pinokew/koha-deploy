@@ -1,0 +1,32 @@
+vulnerabilities:
+  - id: CVE-2025-68121
+    expired_at: 2026-03-31
+    statement: "Temporary risk acceptance: Koha image includes gosu built with vulnerable Go stdlib. Remove after upstream Koha base image refresh."
+
+  - id: CVE-2025-58183
+    expired_at: 2026-04-15
+    statement: "Temporary risk acceptance: Go stdlib vulnerability in upstream gosu binary within Koha image. Remove after upstream refresh."
+
+  - id: CVE-2025-61726
+    expired_at: 2026-04-15
+    statement: "Temporary risk acceptance: Go stdlib vulnerability in upstream gosu binary within Koha image. Remove after upstream refresh."
+
+  - id: CVE-2025-61728
+    expired_at: 2026-04-15
+    statement: "Temporary risk acceptance: Go stdlib vulnerability in upstream gosu binary within Koha image. Remove after upstream refresh."
+
+  - id: CVE-2025-61729
+    expired_at: 2026-04-15
+    statement: "Temporary risk acceptance: Go stdlib vulnerability in upstream gosu binary within Koha image. Remove after upstream refresh."
+
+  - id: CVE-2025-61730
+    expired_at: 2026-04-15
+    statement: "Temporary risk acceptance: Go stdlib vulnerability in upstream gosu binary within Koha image. Remove after upstream refresh."
+
+  - id: CVE-2025-68973
+    expired_at: 2026-04-30
+    statement: "Temporary risk acceptance: Elasticsearch image base package (gpgv). Remove after base package update in upstream image."
+
+  - id: GHSA-72hv-8253-57qq
+    expired_at: 2026-04-30
+    statement: "Temporary risk acceptance: Elasticsearch transitive jackson-core dependency in bundled JAR. Remove after upstream dependency refresh."
