@@ -20,8 +20,16 @@ env:
   IMAGE_NAME: pinokew/koha
   KOHA_VERSION: "25.05"
   LOCAL_SCAN_IMAGE: local/koha-scan:${{ github.sha }}
+  MARIADB_SCAN_IMAGE: local/mariadb-scan:${{ github.sha }}
+  ES_SCAN_IMAGE: local/es-scan:${{ github.sha }}
+  RABBITMQ_SCAN_IMAGE: local/rabbitmq-scan:${{ github.sha }}
+  MEMCACHED_SCAN_IMAGE: local/memcached-scan:${{ github.sha }}
   TRIVY_IMAGE: aquasec/trivy:0.57.1
   HADOLINT_IMAGE: hadolint/hadolint:v2.13.1-alpine
+  MARIADB_IMAGE_DEFAULT: docker.io/mariadb:11
+  ES_VERSION_DEFAULT: "8.19.6"
+  RABBITMQ_VERSION_DEFAULT: "3-management"
+  MEMCACHED_VERSION_DEFAULT: "1.6"
 
 jobs:
   ci-checks:
@@ -123,6 +131,48 @@ jobs:
             echo "Resolved mode: pull source image ${source_image}"
           fi
 
+      - name: Resolve dependency image inputs
+        id: resolve_dep_images
+        run: |
+          set -euo pipefail
+
+          resolve_var() {
+            local key="$1"
+            local file value
+            for file in .env .env.example; do
+              [ -f "${file}" ] || continue
+              value="$(grep -E "^${key}=" "${file}" | tail -n1 | cut -d'=' -f2- || true)"
+              if [ -n "${value}" ]; then
+                printf '%s' "${value}"
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          mariadb_image="$(resolve_var MARIADB_IMAGE || true)"
+          es_version="$(resolve_var ES_VERSION || true)"
+          rabbitmq_version="$(resolve_var RABBITMQ_VERSION || true)"
+          memcached_version="$(resolve_var MEMCACHED_VERSION || true)"
+
+          [ -n "${mariadb_image}" ] || mariadb_image="${MARIADB_IMAGE_DEFAULT}"
+          [ -n "${es_version}" ] || es_version="${ES_VERSION_DEFAULT}"
+          [ -n "${rabbitmq_version}" ] || rabbitmq_version="${RABBITMQ_VERSION_DEFAULT}"
+          [ -n "${memcached_version}" ] || memcached_version="${MEMCACHED_VERSION_DEFAULT}"
+
+          {
+            echo "mariadb_image=${mariadb_image}"
+            echo "es_version=${es_version}"
+            echo "rabbitmq_version=${rabbitmq_version}"
+            echo "memcached_version=${memcached_version}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "Resolved dep images:"
+          echo "- mariadb_image=${mariadb_image}"
+          echo "- es_version=${es_version}"
+          echo "- rabbitmq_version=${rabbitmq_version}"
+          echo "- memcached_version=${memcached_version}"
+
       - name: Set up Buildx builder
         if: steps.resolve_source.outputs.mode == 'build'
         run: |
@@ -169,35 +219,76 @@ jobs:
           docker pull "${{ steps.resolve_source.outputs.source_image }}"
           docker tag "${{ steps.resolve_source.outputs.source_image }}" "${LOCAL_SCAN_IMAGE}"
 
-      - name: Trivy image
-        id: trivy_image
+      - name: Prepare dependency images for Trivy scan
+        run: |
+          set -euo pipefail
+          docker pull "${{ steps.resolve_dep_images.outputs.mariadb_image }}"
+          docker tag "${{ steps.resolve_dep_images.outputs.mariadb_image }}" "${MARIADB_SCAN_IMAGE}"
+
+          docker build \
+            --file elasticsearch/Dockerfile \
+            --build-arg ES_VERSION="${{ steps.resolve_dep_images.outputs.es_version }}" \
+            --tag "${ES_SCAN_IMAGE}" \
+            elasticsearch
+
+          docker build \
+            --file rabbitmq/Dockerfile \
+            --build-arg RABBITMQ_VERSION="${{ steps.resolve_dep_images.outputs.rabbitmq_version }}" \
+            --tag "${RABBITMQ_SCAN_IMAGE}" \
+            rabbitmq
+
+          docker build \
+            --file memcached/Dockerfile \
+            --build-arg MEMCACHED_VERSION="${{ steps.resolve_dep_images.outputs.memcached_version }}" \
+            --tag "${MEMCACHED_SCAN_IMAGE}" \
+            memcached
+
+      - name: Trivy images
+        id: trivy_images
         continue-on-error: true
         run: |
           set -euo pipefail
-          log_file="trivy-image.log"
-          set +e
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            "${TRIVY_IMAGE}" image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "${LOCAL_SCAN_IMAGE}" 2>&1 | tee "${log_file}"
-          trivy_rc=${PIPESTATUS[0]}
-          set -e
-          echo "exit_code=${trivy_rc}" >> "${GITHUB_OUTPUT}"
+          log_file="trivy-images.log"
+          : > "${log_file}"
+          overall_rc=0
+          images=(
+            "${LOCAL_SCAN_IMAGE}"
+            "${MARIADB_SCAN_IMAGE}"
+            "${ES_SCAN_IMAGE}"
+            "${RABBITMQ_SCAN_IMAGE}"
+            "${MEMCACHED_SCAN_IMAGE}"
+          )
 
-      - name: Trivy image log tail
+          for image in "${images[@]}"; do
+            echo "----- Trivy image scan: ${image} -----" | tee -a "${log_file}"
+            set +e
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              "${TRIVY_IMAGE}" image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "${image}" 2>&1 | tee -a "${log_file}"
+            scan_rc=${PIPESTATUS[0]}
+            set -e
+            if [ "${scan_rc}" -ne 0 ]; then
+              overall_rc=1
+            fi
+          done
+
+          echo "exit_code=${overall_rc}" >> "${GITHUB_OUTPUT}"
+
+      - name: Trivy images log tail
         if: always()
         run: |
           set -euo pipefail
-          if [ -f trivy-image.log ]; then
-            echo "----- trivy-image.log (tail -200) -----"
-            tail -n 200 trivy-image.log
+          if [ -f trivy-images.log ]; then
+            echo "----- trivy-images.log (tail -200) -----"
+            tail -n 200 trivy-images.log
           else
-            echo "trivy-image.log not found"
+            echo "trivy-images.log not found"
           fi
 
-      - name: Fail on Trivy image
-        if: steps.trivy_image.outputs.exit_code != '0'
+      - name: Fail on Trivy images
+        if: steps.trivy_images.outputs.exit_code != '0'
         run: |
-          echo "Trivy image failed with exit code ${{ steps.trivy_image.outputs.exit_code }}"
+          echo "Trivy images failed with exit code ${{ steps.trivy_images.outputs.exit_code }}"
           exit 1
 
       - name: Build and push image

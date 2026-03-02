@@ -222,6 +222,41 @@
 
 - Перевірено:
   - `actionlint .github/workflows/ci-cd-checks.yml` проходить.
+
+### 13) Обов'язковий Trivy image scan для `mariadb/es/rabbitmq/memcached` + `koha`
+
+- У `build-and-publish` розширено image-scan покриття:
+  - `LOCAL_SCAN_IMAGE` (koha)
+  - `MARIADB_SCAN_IMAGE`
+  - `ES_SCAN_IMAGE`
+  - `RABBITMQ_SCAN_IMAGE`
+  - `MEMCACHED_SCAN_IMAGE`
+
+- Додано резолв змінних з `.env`/`.env.example` з fallback:
+  - `MARIADB_IMAGE` (fallback: `docker.io/mariadb:11`)
+  - `ES_VERSION` (fallback: `8.19.6`)
+  - `RABBITMQ_VERSION` (fallback: `3-management`)
+  - `MEMCACHED_VERSION` (fallback: `1.6`)
+
+- Додано крок підготовки образів для скану:
+  - `docker pull` + `docker tag` для MariaDB image.
+  - `docker build` для:
+    - `elasticsearch/Dockerfile`
+    - `rabbitmq/Dockerfile`
+    - `memcached/Dockerfile`
+
+- `Trivy image` замінено на мульти-скан крок `Trivy images`:
+  - послідовно сканує всі 5 образів;
+  - формує спільний лог `trivy-images.log`;
+  - падає job, якщо будь-який image scan повернув non-zero.
+
+- Перевірено:
+  - `actionlint .github/workflows/ci-cd-checks.yml` проходить.
+  - резолв в локальному середовищі:
+    - `MARIADB_IMAGE=docker.io/mariadb:11`
+    - `ES_VERSION=8.19.6`
+    - `RABBITMQ_VERSION=3-management`
+    - `MEMCACHED_VERSION=1.6`
   - Примітка: окремий файл `build-and-push.yml` має власну pre-existing синтаксичну проблему (`uses: *trivy_action`) і потребує окремого виправлення.
 
 ### 6) CI fix: `shellcheck` fail у `ci-checks`
