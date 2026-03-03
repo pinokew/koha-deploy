@@ -63,3 +63,24 @@
 
 - Перевірено:
   - `actionlint .github/workflows/ci-cd-checks.yml` (через `rhysd/actionlint:1.7.8`) — OK.
+
+### 4) Tailscale warning fix: перехід на OAuth client (з fallback на authkey)
+
+- Передумова:
+  - у `cd-deploy` з'являлось попередження:
+    - input `authkey` deprecated, рекомендовано OAuth client.
+
+- Оновлено:
+  - [.github/workflows/ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml)
+  - додано підтримку OAuth client у Tailscale step:
+    - `oauth-client-id` з `secrets.TS_OAUTH_CLIENT_ID`
+    - `oauth-secret` з `secrets.TS_OAUTH_SECRET`
+    - `tags: tag:ci`
+  - залишено backward-compatible fallback:
+    - якщо OAuth secrets не задані, використовується існуючий `TAILSCALE_AUTHKEY`.
+
+- Результат:
+  - workflow готовий до безпечної міграції на OAuth без ломання поточного деплою.
+
+- Перевірено:
+  - `actionlint .github/workflows/ci-cd-checks.yml` (через `rhysd/actionlint:1.7.8`) — OK.
