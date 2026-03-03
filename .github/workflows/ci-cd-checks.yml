@@ -99,9 +99,6 @@ jobs:
       DEPLOY_FULL_REF: ${{ github.ref }}
       DEPLOY_REF: ${{ github.ref_name }}
       TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
-      TAILSCALE_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-      TAILSCALE_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
-      TAILSCALE_TAGS: tag:ci
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -116,18 +113,8 @@ jobs:
           [ -n "${{ secrets.SERVER_USER }}" ] || { echo "Missing secret: SERVER_USER"; exit 1; }
           [ -n "${{ secrets.SERVER_SSH_KEY }}" ] || { echo "Missing secret: SERVER_SSH_KEY"; exit 1; }
 
-      - name: Connect to Tailscale (OAuth client)
-        id: tailscale_oauth
-        if: env.TAILSCALE_OAUTH_CLIENT_ID != '' && env.TAILSCALE_OAUTH_SECRET != ''
-        continue-on-error: true
-        uses: tailscale/github-action@v4
-        with:
-          oauth-client-id: ${{ env.TAILSCALE_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ env.TAILSCALE_OAUTH_SECRET }}
-          tags: ${{ env.TAILSCALE_TAGS }}
-
-      - name: Connect to Tailscale (authkey fallback)
-        if: env.TAILSCALE_AUTHKEY != '' && (env.TAILSCALE_OAUTH_CLIENT_ID == '' || env.TAILSCALE_OAUTH_SECRET == '' || steps.tailscale_oauth.outcome == 'failure')
+      - name: Connect to Tailscale
+        if: env.TAILSCALE_AUTHKEY != ''
         uses: tailscale/github-action@v4
         with:
           authkey: ${{ env.TAILSCALE_AUTHKEY }}
