@@ -138,8 +138,9 @@ verify_backup_artifacts() {
   (
     cd "${WORK_DIR}"
     local sums_file_tmp
-    sums_file_tmp="$(mktemp SHA256SUMS.XXXXXX)"
-    find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+    # Keep temporary checksum file outside WORK_DIR so it never gets hashed.
+    sums_file_tmp="$(mktemp)"
+    find . -maxdepth 1 -type f ! -name SHA256SUMS ! -name 'SHA256SUMS.*' -print0 \
       | sort -z \
       | xargs -0 -r sha256sum > "${sums_file_tmp}"
     mv "${sums_file_tmp}" SHA256SUMS

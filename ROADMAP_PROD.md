@@ -38,7 +38,7 @@ Roadmap: Koha Production Hardening and Performance (v2)
 
 # 1) Blocking перед go-live
 
-## 1.1 SDLC та захищений CI/CD
+<!-- ## 1.1 SDLC та захищений CI/CD
 Що робимо:
 1. Увімкнути branch protection для `main`: no direct push, required review, required checks.
 2. Додати обов'язкові CI-перевірки: `hadolint`, `shellcheck`, `trivy config`, `trivy image`, `secret-scan`.
@@ -47,7 +47,7 @@ Roadmap: Koha Production Hardening and Performance (v2)
 
 DoD:
 1. Жоден PR не мержиться без review та повного зеленого набору checks.
-2. Усі security checks блокують merge при помилці.
+2. Усі security checks блокують merge при помилці. -->
 
 <!-- ## 1.2 Runtime hardening та ізоляція мережі
 Що робимо:
@@ -68,7 +68,7 @@ DoD:
 DoD:
 1. Користувач opac не може зміниnb пароль. -->
 
-## 1.4 Supply-chain базовий мінімум
+<!-- ## 1.4 Supply-chain базовий мінімум
 Що робимо:
 1. Публікувати deploy-образи як immutable (`sha256:digest`), без `latest`.
 2. Для deploy-repo прибрати `build` у production-флоу і перейти на підготовлені image/digest.
@@ -76,7 +76,7 @@ DoD:
 
 DoD:
 1. Production запускається тільки на immutable images.
-2. Кожен реліз має SBOM і пройдений image scan.
+2. Кожен реліз має SBOM і пройдений image scan. -->
 
 ## 1.5 Спостережуваність (мінімум)
 Що робимо:

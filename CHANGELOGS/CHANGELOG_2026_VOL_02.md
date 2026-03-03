@@ -107,7 +107,7 @@
 
 - Для required workflow не використовується `paths-ignore` (щоб уникати пропущених required checks на PR).
 
-- Імплементовано корисні практики з `build-and-push.yml`:
+- Імплементовано додаткові корисні практики:
   - `timeout-minutes` для jobs
   - `persist-credentials: false`, `fetch-depth: 1`
   - `workflow_dispatch`
@@ -257,7 +257,6 @@
     - `ES_VERSION=8.19.6`
     - `RABBITMQ_VERSION=3-management`
     - `MEMCACHED_VERSION=1.6`
-  - Примітка: окремий файл `build-and-push.yml` має власну pre-existing синтаксичну проблему (`uses: *trivy_action`) і потребує окремого виправлення.
 
 ### 6) CI fix: `shellcheck` fail у `ci-checks`
 

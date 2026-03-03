@@ -29,11 +29,23 @@ env:
   RABBITMQ_VERSION_DEFAULT: "3-management"
   MEMCACHED_VERSION_DEFAULT: "1.6"
 
-  TRIVY_IMAGE: aquasec/trivy@sha256:33f816d414b9d582d25bb737ffa4a632ae34e222f7ec1b50252cef0ce2266006
+  TRIVY_IMAGE: aquasec/trivy@sha256:3d1f862cb6c4fe13c1506f96f816096030d8d5ccdb2380a3069f7bf07daa86aa
   HADOLINT_IMAGE: hadolint/hadolint@sha256:84c2f9088a8cb0ea2bd16b5349186770d16441e77eec1a1d1e0574cf7dff47ac
   SHELLCHECK_IMAGE: koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
   GITLEAKS_IMAGE: zricethezav/gitleaks@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
   SYFT_IMAGE: anchore/syft@sha256:19ed45c8f4bf846390b072966a2fec52279d09f9e47650830ffabec7eebaf0fe
+
+  DEPLOY_PROJECT_DIR: /home/pinokew/Koha/koha-deploy
+  DEPLOY_BRANCH: main
+  DEPLOY_COMPOSE_FILE: docker-compose.yaml
+  DEPLOY_SERVICES: db es rabbitmq memcached koha tunnel
+  DEPLOY_ENV_VERIFY_SCRIPT: scripts/verify-env.sh
+  DEPLOY_BOOTSTRAP_SCRIPT: scripts/bootstrap-live-configs.sh
+  DEPLOY_BOOTSTRAP_MODE: --all
+  DEPLOY_BOOTSTRAP_WAIT_TIMEOUT: "300"
+  DEPLOY_HEALTH_SERVICE: koha
+  DEPLOY_HEALTH_RETRIES: "30"
+  DEPLOY_HEALTH_SLEEP_SECONDS: "10"
 
 
 jobs:
@@ -42,11 +54,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-          fetch-depth: 1
+      - &checkout_step
+          name: Checkout
+          uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+          with:
+            persist-credentials: false
+            fetch-depth: 1
 
       - name: Hadolint
         run: |
@@ -97,6 +110,9 @@ jobs:
       - name: Internal ports policy check
         run: bash ./scripts/check-internal-ports-policy.sh
 
+      - name: Env template validation
+        run: bash ./scripts/verify-env.sh --example-only
+
       - name: Gitleaks
         run: |
           set -euo pipefail
@@ -109,11 +125,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Checkout
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
-        with:
-          persist-credentials: false
-          fetch-depth: 1
+      - *checkout_step
 
       - name: Resolve image source mode
         id: resolve_source
@@ -331,3 +343,89 @@ jobs:
             "${SYFT_IMAGE}" \
             "docker:${LOCAL_SCAN_IMAGE}" \
             -o "spdx-json=/work/sbom-${GITHUB_SHA}.spdx.json"
+
+  cd-deploy:
+    name: cd-deploy
+    needs:
+      - ci-checks
+      - build-and-publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_owner == 'pinokew'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: koha-prod-deploy
+      cancel-in-progress: false
+    env:
+      DEPLOY_FULL_REF: ${{ github.ref }}
+      DEPLOY_REF: ${{ github.ref_name }}
+      TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+    steps:
+      - *checkout_step
+
+      - name: Validate deploy secrets
+        run: |
+          set -euo pipefail
+          [ -n "${{ secrets.SERVER_HOST }}" ] || { echo "Missing secret: SERVER_HOST"; exit 1; }
+          [ -n "${{ secrets.SERVER_USER }}" ] || { echo "Missing secret: SERVER_USER"; exit 1; }
+          [ -n "${{ secrets.SERVER_SSH_KEY }}" ] || { echo "Missing secret: SERVER_SSH_KEY"; exit 1; }
+
+      - name: Connect to Tailscale
+        if: env.TAILSCALE_AUTHKEY != ''
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ env.TAILSCALE_AUTHKEY }}
+
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          envs: DEPLOY_FULL_REF,DEPLOY_REF,DEPLOY_PROJECT_DIR,DEPLOY_BRANCH,DEPLOY_COMPOSE_FILE,DEPLOY_SERVICES,DEPLOY_ENV_VERIFY_SCRIPT,DEPLOY_BOOTSTRAP_SCRIPT,DEPLOY_BOOTSTRAP_MODE,DEPLOY_BOOTSTRAP_WAIT_TIMEOUT,DEPLOY_HEALTH_SERVICE,DEPLOY_HEALTH_RETRIES,DEPLOY_HEALTH_SLEEP_SECONDS
+          script: |
+            set -euo pipefail
+
+            echo "Starting deploy for ${DEPLOY_REF} (${DEPLOY_FULL_REF})"
+            cd "${DEPLOY_PROJECT_DIR}"
+
+            if [ ! -f .env ]; then
+              echo "ERROR: .env not found in ${DEPLOY_PROJECT_DIR}"
+              exit 1
+            fi
+
+            git fetch --prune origin
+            git checkout -f "${DEPLOY_BRANCH}"
+            git reset --hard "origin/${DEPLOY_BRANCH}"
+
+            chmod +x scripts/*.sh || true
+            chmod +x scripts/patch/*.sh || true
+
+            bash "${DEPLOY_ENV_VERIFY_SCRIPT}"
+            docker compose -f "${DEPLOY_COMPOSE_FILE}" pull
+
+            read -r -a deploy_services <<< "${DEPLOY_SERVICES}"
+            docker compose -f "${DEPLOY_COMPOSE_FILE}" up -d --remove-orphans "${deploy_services[@]}"
+
+            if [ -x "${DEPLOY_BOOTSTRAP_SCRIPT}" ]; then
+              bash "${DEPLOY_BOOTSTRAP_SCRIPT}" "${DEPLOY_BOOTSTRAP_MODE}" --wait-timeout "${DEPLOY_BOOTSTRAP_WAIT_TIMEOUT}"
+            fi
+
+            container_id="$(docker compose -f "${DEPLOY_COMPOSE_FILE}" ps -q "${DEPLOY_HEALTH_SERVICE}")"
+            [ -n "${container_id}" ] || { echo "ERROR: service ${DEPLOY_HEALTH_SERVICE} not found"; exit 1; }
+
+            attempt=1
+            while [ "${attempt}" -le "${DEPLOY_HEALTH_RETRIES}" ]; do
+              health_status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_id}")"
+              if [ "${health_status}" = "healthy" ] || [ "${health_status}" = "running" ]; then
+                echo "Deploy OK: ${DEPLOY_HEALTH_SERVICE} status=${health_status}"
+                exit 0
+              fi
+              echo "Waiting for ${DEPLOY_HEALTH_SERVICE} health (attempt ${attempt}/${DEPLOY_HEALTH_RETRIES}): status=${health_status}"
+              sleep "${DEPLOY_HEALTH_SLEEP_SECONDS}"
+              attempt=$((attempt + 1))
+            done
+
+            echo "ERROR: ${DEPLOY_HEALTH_SERVICE} did not become healthy in time"
+            docker compose -f "${DEPLOY_COMPOSE_FILE}" ps || true
+            docker compose -f "${DEPLOY_COMPOSE_FILE}" logs --tail=200 "${DEPLOY_HEALTH_SERVICE}" || true
+            exit 1

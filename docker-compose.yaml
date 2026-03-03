@@ -16,9 +16,11 @@ services:
         hard: 65536
     mem_limit: ${KOHA_MEM_LIMIT:-2g}
     cpus: ${KOHA_CPUS:-1.50}
-    ports:
-      - "${KOHA_OPAC_PORT:-8080}:${KOHA_OPAC_PORT:-8080}"
-      - "${KOHA_INTRANET_PORT:-8081}:${KOHA_INTRANET_PORT:-8081}"
+    # Host-published ports are intentionally disabled in production.
+    # External access must go only through the Cloudflare tunnel service.
+    # ports:
+    #   - "${KOHA_OPAC_PORT:-8080}:${KOHA_OPAC_PORT:-8080}"
+    #   - "${KOHA_INTRANET_PORT:-8081}:${KOHA_INTRANET_PORT:-8081}"
     networks:
       - kohanet
     cap_add:
@@ -224,7 +226,6 @@ services:
 
   tunnel:
     image: ${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:2026.2.0}
-    # profiles: ["tunnel"]
     restart: unless-stopped
     logging:
       driver: json-file
