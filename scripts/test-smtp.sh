@@ -81,6 +81,7 @@ log "From: ${FROM_ADDR}"
 log "To:   ${TO_ADDR}"
 log "Subject: ${SUBJECT}"
 
+# shellcheck disable=SC2016
 PERL_SEND='my $cfg=C4::Context->config("smtp_server"); my %opts=(host=>$cfg->{host},port=>0+($cfg->{port}||25),timeout=>0+($cfg->{timeout}||120)); if (($cfg->{ssl_mode}||"disabled") eq "ssl"){$opts{ssl}=1;} elsif (($cfg->{ssl_mode}||"disabled") eq "starttls"){$opts{ssl}="starttls";} if (($cfg->{user_name}||"") ne ""){$opts{sasl_username}=$cfg->{user_name};$opts{sasl_password}=$cfg->{password};} my $transport=Email::Sender::Transport::SMTP->new(\%opts); my $email=Email::Simple->create(header=>[To=>$ENV{SMTP_TO},From=>$ENV{SMTP_FROM},Subject=>$ENV{SMTP_SUBJECT}],body=>$ENV{SMTP_BODY}); eval { sendmail($email,{transport=>$transport}); 1 } or die "SMTP send failed: $@"; print "SMTP send OK\n";'
 
 docker compose exec -T \
