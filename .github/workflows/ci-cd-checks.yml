@@ -117,7 +117,9 @@ jobs:
           [ -n "${{ secrets.SERVER_SSH_KEY }}" ] || { echo "Missing secret: SERVER_SSH_KEY"; exit 1; }
 
       - name: Connect to Tailscale (OAuth client)
+        id: tailscale_oauth
         if: env.TAILSCALE_OAUTH_CLIENT_ID != '' && env.TAILSCALE_OAUTH_SECRET != ''
+        continue-on-error: true
         uses: tailscale/github-action@v4
         with:
           oauth-client-id: ${{ env.TAILSCALE_OAUTH_CLIENT_ID }}
@@ -125,7 +127,7 @@ jobs:
           tags: ${{ env.TAILSCALE_TAGS }}
 
       - name: Connect to Tailscale (authkey fallback)
-        if: env.TAILSCALE_AUTHKEY != '' && (env.TAILSCALE_OAUTH_CLIENT_ID == '' || env.TAILSCALE_OAUTH_SECRET == '')
+        if: env.TAILSCALE_AUTHKEY != '' && (env.TAILSCALE_OAUTH_CLIENT_ID == '' || env.TAILSCALE_OAUTH_SECRET == '' || steps.tailscale_oauth.outcome == 'failure')
         uses: tailscale/github-action@v4
         with:
           authkey: ${{ env.TAILSCALE_AUTHKEY }}

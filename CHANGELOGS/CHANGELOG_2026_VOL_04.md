@@ -84,3 +84,22 @@
 
 - Перевірено:
   - `actionlint .github/workflows/ci-cd-checks.yml` (через `rhysd/actionlint:1.7.8`) — OK.
+
+### 5) CD hardening: fallback на `authkey` при runtime-failure OAuth
+
+- Проблема:
+  - у `cd-deploy` OAuth-підключення до Tailscale могло падати runtime-помилкою (`tailscale up`, `sudo failed`),
+    що блокувало весь деплой навіть за наявного робочого `TAILSCALE_AUTHKEY`.
+
+- Виправлено:
+  - у [.github/workflows/ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml):
+    - крок `Connect to Tailscale (OAuth client)` отримав `id: tailscale_oauth` + `continue-on-error: true`;
+    - крок `Connect to Tailscale (authkey fallback)` тепер запускається також коли
+      `steps.tailscale_oauth.outcome == 'failure'`.
+
+- Результат:
+  - деплой не блокується через тимчасово некоректний OAuth-конфіг;
+  - за наявності `TAILSCALE_AUTHKEY` виконується автоматичний fallback.
+
+- Перевірено:
+  - `actionlint .github/workflows/ci-cd-checks.yml` (через `rhysd/actionlint:1.7.8`) — OK.
