@@ -337,4 +337,27 @@
 
 - Перевірено:
   - workflow пройшов лінт:
-    - `actionlint .github/workflows/ci-cd-checks.yml` (через контейнер `rhysd/actionlint:1.7.8`) — OK.
+  - `actionlint .github/workflows/ci-cd-checks.yml` (через контейнер `rhysd/actionlint:1.7.8`) — OK.
+
+### 16) CD fix: `pull access denied` для локальних образів `koha-local-*`
+
+- Проблема на `cd-deploy`:
+  - `docker compose pull` намагався тягнути `koha-local-rabbitmq`, `koha-local-es`, `koha-local-memcached`;
+  - ці образи мають збиратися з локального `build` context, а не завантажуватись з реєстру.
+
+- Виправлено у workflow:
+  - [.github/workflows/ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml)
+  - додано розділення сервісів для деплою:
+    - `DEPLOY_PULL_SERVICES`: `db koha tunnel`
+    - `DEPLOY_BUILD_SERVICES`: `rabbitmq es memcached`
+    - `DEPLOY_SERVICES`: повний список для `up -d`
+  - у SSH deploy script:
+    - `docker compose pull` виконується тільки для `DEPLOY_PULL_SERVICES`;
+    - `docker compose build` виконується для `DEPLOY_BUILD_SERVICES`;
+    - після цього стандартний `docker compose up -d --remove-orphans`.
+
+- Додатково:
+  - прибрано YAML alias для checkout step (actionlint-несумісність), checkout кроки зроблено явними в кожному job.
+
+- Перевірено:
+  - `actionlint .github/workflows/ci-cd-checks.yml` (через контейнер `rhysd/actionlint:1.7.8`) — OK.

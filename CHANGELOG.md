@@ -4,17 +4,22 @@
 
 ## Поточний активний том
 
-1. [CHANGELOG_2026_VOL_03.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_03.md)
+1. [CHANGELOG_2026_VOL_04.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_04.md)
    - Статус: active
-   - Рядків: ~72
-   - Контекст: тимчасове risk acceptance Trivy + стабілізація застосування ignore-файлу в image scans
+   - Рядків: ~20
+   - Контекст: продовження CI/CD та deploy-автоматизації після ротації тому
 
-2. [CHANGELOG_2026_VOL_02.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_02.md)
+2. [CHANGELOG_2026_VOL_03.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_03.md)
+   - Статус: archived
+   - Рядків: 363
+   - Контекст: CI/CD hardening, SMTP/bootstrap flow, перехід на image-level startup fix та CD workflow
+
+3. [CHANGELOG_2026_VOL_02.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_02.md)
    - Статус: archived
    - Рядків: ~299
    - Контекст: перехід до roadmap 1.3 (Identity/OIDC lockdown), поетапна імплементація
 
-3. [CHANGELOG_2026_VOL_01.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_01.md)
+4. [CHANGELOG_2026_VOL_01.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_01.md)
    - Статус: archived
    - Рядків: ~292
    - Контекст: старт production hardening, roadmap 1.1 і 1.2 (поетапно), DR/restore стабілізація

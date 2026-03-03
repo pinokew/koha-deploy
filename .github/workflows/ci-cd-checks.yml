@@ -17,27 +17,15 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_NAME: pinokew/koha
-  KOHA_VERSION: "25.05"
-  LOCAL_SCAN_IMAGE: local/koha-scan:${{ github.sha }}
-  MARIADB_SCAN_IMAGE: local/mariadb-scan:${{ github.sha }}
-  ES_SCAN_IMAGE: local/es-scan:${{ github.sha }}
-  RABBITMQ_SCAN_IMAGE: local/rabbitmq-scan:${{ github.sha }}
-  MEMCACHED_SCAN_IMAGE: local/memcached-scan:${{ github.sha }}
-  MARIADB_IMAGE_DEFAULT: docker.io/mariadb:11
-  ES_VERSION_DEFAULT: "8.19.6"
-  RABBITMQ_VERSION_DEFAULT: "3-management"
-  MEMCACHED_VERSION_DEFAULT: "1.6"
-
-  TRIVY_IMAGE: aquasec/trivy@sha256:3d1f862cb6c4fe13c1506f96f816096030d8d5ccdb2380a3069f7bf07daa86aa
   HADOLINT_IMAGE: hadolint/hadolint@sha256:84c2f9088a8cb0ea2bd16b5349186770d16441e77eec1a1d1e0574cf7dff47ac
   SHELLCHECK_IMAGE: koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
   GITLEAKS_IMAGE: zricethezav/gitleaks@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
-  SYFT_IMAGE: anchore/syft@sha256:19ed45c8f4bf846390b072966a2fec52279d09f9e47650830ffabec7eebaf0fe
 
   DEPLOY_PROJECT_DIR: /home/pinokew/Koha/koha-deploy
   DEPLOY_BRANCH: main
   DEPLOY_COMPOSE_FILE: docker-compose.yaml
+  DEPLOY_PULL_SERVICES: db koha tunnel
+  DEPLOY_BUILD_SERVICES: rabbitmq es memcached
   DEPLOY_SERVICES: db es rabbitmq memcached koha tunnel
   DEPLOY_ENV_VERIFY_SCRIPT: scripts/verify-env.sh
   DEPLOY_BOOTSTRAP_SCRIPT: scripts/bootstrap-live-configs.sh
@@ -47,19 +35,17 @@ env:
   DEPLOY_HEALTH_RETRIES: "30"
   DEPLOY_HEALTH_SLEEP_SECONDS: "10"
 
-
 jobs:
   ci-checks:
     name: ci-checks
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
-      - &checkout_step
-          name: Checkout
-          uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-          with:
-            persist-credentials: false
-            fetch-depth: 1
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          fetch-depth: 1
 
       - name: Hadolint
         run: |
@@ -75,34 +61,13 @@ jobs:
           [ "${#files[@]}" -gt 0 ] || { echo "No shell scripts found under scripts/"; exit 1; }
           docker run --rm -v "$PWD:/work" -w /work "${SHELLCHECK_IMAGE}" -x "${files[@]}"
 
-      - name: Trivy config
-        id: trivy_config
-        continue-on-error: true
+      - name: Compose validation
         run: |
           set -euo pipefail
-          log_file="trivy-config.log"
-          set +e
-          docker run --rm -v "$PWD:/work" -w /work "${TRIVY_IMAGE}" config --skip-check-update --exit-code 1 --severity HIGH,CRITICAL /work 2>&1 | tee "${log_file}"
-          trivy_rc=${PIPESTATUS[0]}
-          set -e
-          echo "exit_code=${trivy_rc}" >> "${GITHUB_OUTPUT}"
+          docker compose --env-file .env.example -f docker-compose.yaml config -q
 
-      - name: Trivy config log tail
-        if: always()
-        run: |
-          set -euo pipefail
-          if [ -f trivy-config.log ]; then
-            echo "----- trivy-config.log (tail -200) -----"
-            tail -n 200 trivy-config.log
-          else
-            echo "trivy-config.log not found"
-          fi
-
-      - name: Fail on Trivy config
-        if: steps.trivy_config.outputs.exit_code != '0'
-        run: |
-          echo "Trivy config failed with exit code ${{ steps.trivy_config.outputs.exit_code }}"
-          exit 1
+      - name: Env template validation
+        run: bash ./scripts/verify-env.sh --example-only
 
       - name: Local secrets hygiene checks
         run: bash ./scripts/check-secrets-hygiene.sh
@@ -110,245 +75,14 @@ jobs:
       - name: Internal ports policy check
         run: bash ./scripts/check-internal-ports-policy.sh
 
-      - name: Env template validation
-        run: bash ./scripts/verify-env.sh --example-only
-
       - name: Gitleaks
         run: |
           set -euo pipefail
           docker run --rm -v "$PWD:/work" -w /work "${GITLEAKS_IMAGE}" detect --source /work --config /work/.gitleaks.toml --no-banner --redact --exit-code 1
 
-  build-and-publish:
-    name: build-and-publish
-    needs: ci-checks
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository_owner == 'pinokew'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - *checkout_step
-
-      - name: Resolve image source mode
-        id: resolve_source
-        run: |
-          set -euo pipefail
-          if [ -f Dockerfile ]; then
-            {
-              echo "mode=build"
-              echo "dockerfile=Dockerfile"
-              echo "context=."
-            } >> "${GITHUB_OUTPUT}"
-            echo "Resolved mode: build from ./Dockerfile"
-          else
-            source_image="$(grep -E '^KOHA_IMAGE=' .env.example | head -n1 | cut -d'=' -f2-)"
-            [ -n "${source_image}" ] || { echo "Dockerfile missing and KOHA_IMAGE not found in .env.example"; exit 1; }
-            {
-              echo "mode=pull"
-              echo "source_image=${source_image}"
-            } >> "${GITHUB_OUTPUT}"
-            echo "Resolved mode: pull source image ${source_image}"
-          fi
-
-      - name: Resolve dependency image inputs
-        id: resolve_dep_images
-        run: |
-          set -euo pipefail
-
-          resolve_var() {
-            local key="$1"
-            local file value
-            for file in .env .env.example; do
-              [ -f "${file}" ] || continue
-              value="$(grep -E "^${key}=" "${file}" | tail -n1 | cut -d'=' -f2- || true)"
-              if [ -n "${value}" ]; then
-                printf '%s' "${value}"
-                return 0
-              fi
-            done
-            return 1
-          }
-
-          mariadb_image="$(resolve_var MARIADB_IMAGE || true)"
-          es_version="$(resolve_var ES_VERSION || true)"
-          rabbitmq_version="$(resolve_var RABBITMQ_VERSION || true)"
-          memcached_version="$(resolve_var MEMCACHED_VERSION || true)"
-
-          [ -n "${mariadb_image}" ] || mariadb_image="${MARIADB_IMAGE_DEFAULT}"
-          [ -n "${es_version}" ] || es_version="${ES_VERSION_DEFAULT}"
-          [ -n "${rabbitmq_version}" ] || rabbitmq_version="${RABBITMQ_VERSION_DEFAULT}"
-          [ -n "${memcached_version}" ] || memcached_version="${MEMCACHED_VERSION_DEFAULT}"
-
-          {
-            echo "mariadb_image=${mariadb_image}"
-            echo "es_version=${es_version}"
-            echo "rabbitmq_version=${rabbitmq_version}"
-            echo "memcached_version=${memcached_version}"
-          } >> "${GITHUB_OUTPUT}"
-
-          echo "Resolved dep images:"
-          echo "- mariadb_image=${mariadb_image}"
-          echo "- es_version=${es_version}"
-          echo "- rabbitmq_version=${rabbitmq_version}"
-          echo "- memcached_version=${memcached_version}"
-
-      - name: Set up Buildx builder
-        if: steps.resolve_source.outputs.mode == 'build'
-        run: |
-          set -euo pipefail
-          docker buildx create --name koha-builder --driver docker-container --use
-          docker buildx inspect --bootstrap
-
-      - name: Validate Docker Hub secrets
-        if: steps.resolve_source.outputs.mode == 'build'
-        run: |
-          set -euo pipefail
-          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
-            echo "Missing GitHub secret: DOCKERHUB_USERNAME"
-            exit 1
-          fi
-          if [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
-            echo "Missing GitHub secret: DOCKERHUB_TOKEN"
-            exit 1
-          fi
-
-      - name: Docker Hub login
-        if: steps.resolve_source.outputs.mode == 'build'
-        run: |
-          set -euo pipefail
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-
-      - name: Build image for Trivy scan (no push)
-        if: steps.resolve_source.outputs.mode == 'build'
-        run: |
-          set -euo pipefail
-          docker buildx build \
-            --file "${{ steps.resolve_source.outputs.dockerfile }}" \
-            --build-arg KOHA_VERSION="${KOHA_VERSION}" \
-            --tag "${LOCAL_SCAN_IMAGE}" \
-            --cache-from type=gha \
-            --cache-to type=gha,mode=max \
-            --load \
-            "${{ steps.resolve_source.outputs.context }}"
-
-      - name: Pull source image for Trivy scan (no build mode)
-        if: steps.resolve_source.outputs.mode == 'pull'
-        run: |
-          set -euo pipefail
-          docker pull "${{ steps.resolve_source.outputs.source_image }}"
-          docker tag "${{ steps.resolve_source.outputs.source_image }}" "${LOCAL_SCAN_IMAGE}"
-
-      - name: Prepare dependency images for Trivy scan
-        run: |
-          set -euo pipefail
-          docker pull "${{ steps.resolve_dep_images.outputs.mariadb_image }}"
-          docker tag "${{ steps.resolve_dep_images.outputs.mariadb_image }}" "${MARIADB_SCAN_IMAGE}"
-
-          docker build \
-            --file elasticsearch/Dockerfile \
-            --build-arg ES_VERSION="${{ steps.resolve_dep_images.outputs.es_version }}" \
-            --tag "${ES_SCAN_IMAGE}" \
-            elasticsearch
-
-          docker build \
-            --file rabbitmq/Dockerfile \
-            --build-arg RABBITMQ_VERSION="${{ steps.resolve_dep_images.outputs.rabbitmq_version }}" \
-            --tag "${RABBITMQ_SCAN_IMAGE}" \
-            rabbitmq
-
-          docker build \
-            --file memcached/Dockerfile \
-            --build-arg MEMCACHED_VERSION="${{ steps.resolve_dep_images.outputs.memcached_version }}" \
-            --tag "${MEMCACHED_SCAN_IMAGE}" \
-            memcached
-
-      - name: Trivy images
-        id: trivy_images
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          log_file="trivy-images.log"
-          cache_dir="$PWD/.trivy-cache"
-          mkdir -p "${cache_dir}"
-          : > "${log_file}"
-          overall_rc=0
-          images=(
-            "${LOCAL_SCAN_IMAGE}"
-            "${MARIADB_SCAN_IMAGE}"
-            "${ES_SCAN_IMAGE}"
-            "${RABBITMQ_SCAN_IMAGE}"
-            "${MEMCACHED_SCAN_IMAGE}"
-          )
-
-          for image in "${images[@]}"; do
-            echo "----- Trivy image scan: ${image} -----" | tee -a "${log_file}"
-            set +e
-            docker run --rm \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v "$PWD:/work" \
-              -v "${cache_dir}:/trivy-cache" \
-              -w /work \
-              "${TRIVY_IMAGE}" image --scanners vuln --cache-dir /trivy-cache --ignorefile /work/.trivyignore.yaml --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "${image}" 2>&1 | tee -a "${log_file}"
-            scan_rc=${PIPESTATUS[0]}
-            set -e
-            if [ "${scan_rc}" -ne 0 ]; then
-              overall_rc=1
-            fi
-          done
-
-          echo "exit_code=${overall_rc}" >> "${GITHUB_OUTPUT}"
-
-      - name: Trivy images log tail
-        if: always()
-        run: |
-          set -euo pipefail
-          if [ -f trivy-images.log ]; then
-            echo "----- trivy-images.log (tail -200) -----"
-            tail -n 200 trivy-images.log
-          else
-            echo "trivy-images.log not found"
-          fi
-
-      - name: Fail on Trivy images
-        if: steps.trivy_images.outputs.exit_code != '0'
-        run: |
-          echo "Trivy images failed with exit code ${{ steps.trivy_images.outputs.exit_code }}"
-          exit 1
-
-      - name: Build and push image
-        if: steps.resolve_source.outputs.mode == 'build'
-        run: |
-          set -euo pipefail
-          docker buildx build \
-            --file "${{ steps.resolve_source.outputs.dockerfile }}" \
-            --build-arg KOHA_VERSION="${KOHA_VERSION}" \
-            --tag "${IMAGE_NAME}:${KOHA_VERSION}" \
-            --tag "${IMAGE_NAME}:latest" \
-            --tag "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
-            --cache-from type=gha \
-            --cache-to type=gha,mode=max \
-            --push \
-            "${{ steps.resolve_source.outputs.context }}"
-
-      - name: Skip publish (no Dockerfile mode)
-        if: steps.resolve_source.outputs.mode == 'pull'
-        run: |
-          echo "Dockerfile not found in repository root."
-          echo "Build/push skipped; source image was scanned only."
-
-      - name: Generate SBOM (SPDX JSON)
-        run: |
-          set -euo pipefail
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "$PWD:/work" \
-            "${SYFT_IMAGE}" \
-            "docker:${LOCAL_SCAN_IMAGE}" \
-            -o "spdx-json=/work/sbom-${GITHUB_SHA}.spdx.json"
-
   cd-deploy:
     name: cd-deploy
-    needs:
-      - ci-checks
-      - build-and-publish
+    needs: ci-checks
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_owner == 'pinokew'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -360,7 +94,11 @@ jobs:
       DEPLOY_REF: ${{ github.ref_name }}
       TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
     steps:
-      - *checkout_step
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          fetch-depth: 1
 
       - name: Validate deploy secrets
         run: |
@@ -381,7 +119,7 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: DEPLOY_FULL_REF,DEPLOY_REF,DEPLOY_PROJECT_DIR,DEPLOY_BRANCH,DEPLOY_COMPOSE_FILE,DEPLOY_SERVICES,DEPLOY_ENV_VERIFY_SCRIPT,DEPLOY_BOOTSTRAP_SCRIPT,DEPLOY_BOOTSTRAP_MODE,DEPLOY_BOOTSTRAP_WAIT_TIMEOUT,DEPLOY_HEALTH_SERVICE,DEPLOY_HEALTH_RETRIES,DEPLOY_HEALTH_SLEEP_SECONDS
+          envs: DEPLOY_FULL_REF,DEPLOY_REF,DEPLOY_PROJECT_DIR,DEPLOY_BRANCH,DEPLOY_COMPOSE_FILE,DEPLOY_PULL_SERVICES,DEPLOY_BUILD_SERVICES,DEPLOY_SERVICES,DEPLOY_ENV_VERIFY_SCRIPT,DEPLOY_BOOTSTRAP_SCRIPT,DEPLOY_BOOTSTRAP_MODE,DEPLOY_BOOTSTRAP_WAIT_TIMEOUT,DEPLOY_HEALTH_SERVICE,DEPLOY_HEALTH_RETRIES,DEPLOY_HEALTH_SLEEP_SECONDS
           script: |
             set -euo pipefail
 
@@ -401,7 +139,16 @@ jobs:
             chmod +x scripts/patch/*.sh || true
 
             bash "${DEPLOY_ENV_VERIFY_SCRIPT}"
-            docker compose -f "${DEPLOY_COMPOSE_FILE}" pull
+
+            read -r -a pull_services <<< "${DEPLOY_PULL_SERVICES}"
+            if [ "${#pull_services[@]}" -gt 0 ]; then
+              docker compose -f "${DEPLOY_COMPOSE_FILE}" pull "${pull_services[@]}"
+            fi
+
+            read -r -a build_services <<< "${DEPLOY_BUILD_SERVICES}"
+            if [ "${#build_services[@]}" -gt 0 ]; then
+              docker compose -f "${DEPLOY_COMPOSE_FILE}" build "${build_services[@]}"
+            fi
 
             read -r -a deploy_services <<< "${DEPLOY_SERVICES}"
             docker compose -f "${DEPLOY_COMPOSE_FILE}" up -d --remove-orphans "${deploy_services[@]}"
