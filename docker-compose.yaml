@@ -1,6 +1,10 @@
 services:
   koha:
     image: ${KOHA_IMAGE}
+    command:
+      - /bin/sh
+      - -lc
+      - a2enmod remoteip >/dev/null 2>&1 || true; exec /init
     restart: unless-stopped
     logging:
       driver: json-file
@@ -17,12 +21,25 @@ services:
     mem_limit: ${KOHA_MEM_LIMIT:-2g}
     cpus: ${KOHA_CPUS:-1.50}
     # Host-published ports are intentionally disabled in production.
-    # External access must go only through the Cloudflare tunnel service.
+    # External access must go through edge gateway/proxy (Traefik + external tunnel).
     # ports:
     #   - "${KOHA_OPAC_PORT:-8080}:${KOHA_OPAC_PORT:-8080}"
     #   - "${KOHA_INTRANET_PORT:-8081}:${KOHA_INTRANET_PORT:-8081}"
     networks:
       - kohanet
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=koha-deploy_kohanet"
+
+      - "traefik.http.routers.koha-opac.rule=Host(`${KOHA_OPAC_SERVERNAME}`)"
+      - "traefik.http.routers.koha-opac.entrypoints=web"
+      - "traefik.http.routers.koha-opac.service=koha-opac"
+      - "traefik.http.services.koha-opac.loadbalancer.server.port=${KOHA_OPAC_PORT:-8080}"
+
+      - "traefik.http.routers.koha-staff.rule=Host(`${KOHA_INTRANET_SERVERNAME}`)"
+      - "traefik.http.routers.koha-staff.entrypoints=web"
+      - "traefik.http.routers.koha-staff.service=koha-staff"
+      - "traefik.http.services.koha-staff.loadbalancer.server.port=${KOHA_INTRANET_PORT:-8081}"
     cap_add:
       - DAC_READ_SEARCH
       - SYS_NICE
@@ -70,6 +87,7 @@ services:
       es:
         condition: service_healthy
     volumes:
+      - ./apache/remoteip.conf:/etc/apache2/conf-enabled/zz-koha-remoteip.conf:ro
       - ${VOL_KOHA_CONF}:/etc/koha/sites
       - ${VOL_KOHA_CONF}/${KOHA_INSTANCE}:/etc/koha/sites/default
       - ${VOL_KOHA_DATA}:/var/lib/koha
@@ -224,34 +242,7 @@ services:
     networks:
       - kohanet
 
-  tunnel:
-    image: ${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:2026.2.0}
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: ${LOG_MAX_SIZE:-10m}
-        max-file: "${LOG_MAX_FILE:-3}"
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 1024
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-    mem_limit: ${TUNNEL_MEM_LIMIT:-128m}
-    cpus: ${TUNNEL_CPUS:-0.25}
-    cap_drop:
-      - ALL
-    networks:
-      - kohanet
-    environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TOKEN}
-    command: tunnel run
-    depends_on:
-      koha:
-        condition: service_healthy
-
 networks:
   kohanet:
     driver: bridge
+    name: koha-deploy_kohanet

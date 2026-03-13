@@ -38,6 +38,7 @@ RABBITMQ_USER="${RABBITMQ_USER:-guest}"
 SMTP_HOST="${SMTP_HOST:-localhost}"
 SMTP_PORT="${SMTP_PORT:-25}"
 SMTP_SSL_MODE="${SMTP_SSL_MODE:-disabled}"
+KOHA_TRUSTED_PROXIES="${KOHA_TRUSTED_PROXIES:-127.0.0.1 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16}"
 
 grep -q "<timezone>${KOHA_TIMEZONE}</timezone>" "${KOHA_CONF_FILE}" || die "verify failed: timezone"
 grep -q "<memcached_servers>${MEMCACHED_SERVERS}</memcached_servers>" "${KOHA_CONF_FILE}" || die "verify failed: memcached_servers"
@@ -47,5 +48,6 @@ sed -n '/<message_broker>/,/<\/message_broker>/p' "${KOHA_CONF_FILE}" | grep -q 
 sed -n '/<smtp_server>/,/<\/smtp_server>/p' "${KOHA_CONF_FILE}" | grep -q "<host>${SMTP_HOST}</host>" || die "verify failed: smtp host"
 sed -n '/<smtp_server>/,/<\/smtp_server>/p' "${KOHA_CONF_FILE}" | grep -q "<port>${SMTP_PORT}</port>" || die "verify failed: smtp port"
 sed -n '/<smtp_server>/,/<\/smtp_server>/p' "${KOHA_CONF_FILE}" | grep -q "<ssl_mode>${SMTP_SSL_MODE}</ssl_mode>" || die "verify failed: smtp ssl_mode"
+grep -q "<koha_trusted_proxies>${KOHA_TRUSTED_PROXIES}</koha_trusted_proxies>" "${KOHA_CONF_FILE}" || die "verify failed: koha_trusted_proxies"
 
 log "Verify OK: koha-conf.xml runtime values match .env"

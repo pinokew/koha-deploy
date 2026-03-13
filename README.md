@@ -96,7 +96,7 @@
 | **Elasticsearch** | Швидкий повнотекстовий пошук і фасетна навігація |
 | **Message Queue (RabbitMQ)** | Асинхронна обробка (відправка листів, індексація, фонові завдання) |
 | **Caching (Memcached)** | Прискорення сеансів та часто запитуваних даних |
-| **Secure Access (Cloudflare Tunnel)** | Зовнішній доступ без відкриття портів напряму |
+| **Secure Access (Traefik Gateway)** | Зовнішній доступ через Traefik + external Cloudflare Tunnel |
 | **Detailed Logging** | JSON-структуровані логи з ротацією дискових обсягів |
 
 ### Що НЕ входить у скоп цього репо
@@ -121,7 +121,8 @@
 | **Кеш** | Memcached | 1.6.x | Session storage, cache layer |
 | **Черга подій** | RabbitMQ | 3.x | Message broker для async-операцій |
 | **Контейнеризація** | Docker + Compose | latest | Оркестрація сервісів |
-| **Access Control** | Cloudflare Tunnel | 2026.2.0 | Зовнішній доступ без portforward |
+| **Edge Gateway** | Traefik | 3.6.x | Host-based routing для OPAC/Staff |
+| **External Ingress** | Cloudflare Tunnel | managed outside repo | Без прямого expose Koha портів |
 | **CI/CD** | GitHub Actions | latest | Пайплайни дослідження та деплою |
 | **Логування** | JSON-file driver | native | Docker native logging з ротацією |
 
@@ -141,13 +142,13 @@
 
 ```
     ┌─────────────────────────────────────────────────────────┐
-    │   EXTERNAL USERS (OPAC) & STAFF (Intranet)            │
-    │         (через Cloudflare Tunnel)                      │
+   │   EXTERNAL USERS (OPAC) & STAFF (Intranet)            │
+   │     (через Cloudflare Tunnel -> Traefik gateway)      │
     └────────────────────┬────────────────────────────────────┘
                          │ HTTPS
     ┌────────────────────▼────────────────────────────────────┐
-    │      cloudflared tunnel ← Cloudflare (SAT)             │
-    │    (localhost:8080 OPAC, localhost:8081 Intranet)     │
+   │   external cloudflared -> Traefik (:80 internal)       │
+   │   Host: library.pinokew.buzz / koha.pinokew.buzz      │
     └────────────────────┬────────────────────────────────────┘
                          │ internal kohanet
     ┌────────────────────▼────────────────────────────────────┐
@@ -167,7 +168,7 @@
                     └────────────┘
 
     All services in 'kohanet' isolated network
-    No host-published ports (except tunnel ingress)
+   No host-published ports for Koha services
     Resource-limited: CPU/memory/pids/ulimits
 ```
 
@@ -196,11 +197,13 @@ koha-deploy/
 │   └── 📁 patch/                       # Модулі live-конфігу
 │       ├── _patch_common.sh            # Спільні утиліти
 │       ├── patch-koha-conf-xml.sh      # Базова конфігурація
+│       ├── patch-koha-conf-xml-trusted-proxies.sh # trusted proxies chain
 │       ├── patch-koha-conf-xml-memcached.sh  # Memcached інтеграція
 │       ├── patch-koha-conf-xml-message-broker.sh # RabbitMQ інтеграція
 │       ├── patch-koha-conf-xml-smtp.sh # SMTP конфіг
 │       ├── patch-koha-conf-xml-timezone.sh    # Timezone setup
 │       ├── patch-koha-conf-xml-verify.sh      # Верифікація XML
+│       ├── patch-koha-sysprefs-domain.sh      # OPAC/Staff URL sysprefs
 │       └── patch-koha-templates.sh     # HTML/CSS патчі
 │
 ├── 📁 systemd/                         # Systemd service/timer
@@ -213,6 +216,8 @@ koha-deploy/
 │   └── Dockerfile
 ├── 📁 memcached/                       # Local Memcached Dockerfile
 │   └── Dockerfile
+├── 📁 apache/                          # Managed Apache overlays
+│   └── remoteip.conf                   # Real client IP via CF-Connecting-IP
 │
 ├── 📁 .github/workflows/               # CI/CD
 │   └── ci-cd-checks.yml                # Lint, test, deploy workflow
@@ -228,8 +233,7 @@ koha-deploy/
 ├── 📄 ARCHITECTURE.md                  # Архітектурні правила & обмеження
 ├── 📄 RUNBOOK_DR.md                    # Disaster Recovery procedures
 ├── 📄 AGENTS.md                        # New session start guide
-├── 📄 README.md                        # **ВИ ТУТАМО** (це файл)
-└── 📄 README.example.md                # Template for new projects
+└── 📄 README.md                        # **ВИ ТУТАМО** (це файл)
 ```
 
 ---
@@ -240,12 +244,11 @@ koha-deploy/
 
 | Сервіс | Образ | Назначення | Порти (внутрішні) | Health Check |
 |---|---|---|---|---|
-| **koha** | ext. registry | Web-додаток Koha (Plack) | 8080 (OPAC), 8081 (Intranet) | HTTP 8081, 15s interval |
+| **koha** | ext. registry | Web-додаток Koha (Plack) | 8082 (OPAC), 8081 (Intranet) | HTTP 8081, 15s interval |
 | **db** | `mariadb:11` | Реляційна БД | 3306 | mariadb-admin ping, 10s |
 | **es** | local build | Elasticsearch search | 9200 | curl http://9200, 10s |
 | **rabbitmq** | local build | Message queue, async | 5672 (AMQP), 61613 (STOMP), 15672 (mgmt) | rabbitmq-diagnostics ping |
 | **memcached** | local build | Розподілений кеш | 11211 | TCP socket (auto) |
-| **tunnel** | `cloudflare/cloudflared` | Зовнішній доступ | — | TCP keep-alive |
 
 ### Залежності запуску
 
@@ -267,7 +270,6 @@ koha
 | **es** | 1 GB (default) | 1.00 | 1024 |
 | **rabbitmq** | 512 MB (default) | 1.00 | 1024 |
 | **memcached** | 256 MB (default) | 0.50 | 1024 |
-| **tunnel** | 128 MB (default) | 0.25 | 1024 |
 
 > **Примітка**: Усі ліміти можуть бути перевизначені через `.env` змінні (e.g., `KOHA_MEM_LIMIT`, `DB_CPUS`).
 
@@ -292,7 +294,9 @@ koha
 | **Elasticsearch** | `ELASTICSEARCH_HOST`, `USE_ELASTICSEARCH` | `.env` |
 | **RabbitMQ** | `RABBITMQ_USER`, `RABBITMQ_PASS`, `MB_HOST`, `MB_PORT` | `.env` (secret) |
 | **Memcached** | `MEMCACHED_SERVERS` | `.env` |
-| **Cloudflare** | `CLOUDFLARE_TOKEN` | `.env` (secret) |
+| **Edge Domains** | `KOHA_OPAC_SERVERNAME`, `KOHA_INTRANET_SERVERNAME` | `.env` |
+| **Trusted Proxies** | `KOHA_TRUSTED_PROXIES` | `.env` |
+| **Cloudflare** | `CLOUDFLARE_TOKEN` | external tunnel stack / secret store |
 | **SMTP** | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SSL_MODE` | `.env` (secret) |
 | **Volume Paths** | `VOL_DB_PATH`, `VOL_KOHA_CONF`, `VOL_KOHA_DATA` | `.env` |
 | **Resource Limits** | `KOHA_MEM_LIMIT`, `DB_CPUS`, `ES_MEM_LIMIT` | `.env` |
@@ -319,7 +323,9 @@ bash scripts/bootstrap-live-configs.sh --help
 - `patch-koha-conf-xml-message-broker.sh` — RabbitMQ інтеграція
 - `patch-koha-conf-xml-smtp.sh` — SMTP параметри
 - `patch-koha-conf-xml-timezone.sh` — Часовий пояс
-- `patch-koha-templates.sh` — Frontend HTML/CSS патчі
+- `patch-koha-conf-xml-trusted-proxies.sh` — trusted proxies chain у koha-conf.xml
+- `patch-koha-sysprefs-domain.sh` — OPAC/Staff URL sysprefs з env
+- `patch-koha-templates.sh` — deprecated wrapper на bootstrap-live-configs
 
 ---
 
@@ -332,7 +338,7 @@ bash scripts/bootstrap-live-configs.sh --help
 | **Secrets не комітяться** | `.env` в `.gitignore`; CI checks блокують розповсюджування |
 | **Least Privilege** | `cap_drop: ALL`, `security_opt: no-new-privileges`, мінімальні UNIX-права |
 | **Network Isolation** | Єдина внутрішня docker-мережа; немає published host ports |
-| **Access via Tunnel** | Cloudflare Tunnel замість прямого port forwarding |
+| **Edge via Gateway** | External Cloudflare Tunnel -> Traefik -> Koha |
 | **Container Hardening** | `pids_limit`, `ulimits`, memory/cpu limits, seccomp-profiles (можна додати) |
 | **Logging Security** | Логи вивантажуються наприкінці; не залишаються в контейнері |
 | **Image Scanning** | Триви config gate в CI; рекомендовано image scan |
@@ -404,9 +410,9 @@ bash --version          # Bash 4.0+
    RABBITMQ_USER=koha               # RabbitMQ user
    RABBITMQ_PASS=rabbitmq_password  
    
-   # Для локального запуску Cloudflare Tunnel не потрібен
-   # (залишити пусто або використовувати mock)
-   CLOUDFLARE_TOKEN=
+   # Домени для Traefik host-based routing
+   KOHA_OPAC_SERVERNAME=library.pinokew.buzz
+   KOHA_INTRANET_SERVERNAME=koha.pinokew.buzz
    
    # Volume paths (localhot)
    VOL_DB_PATH=/var/lib/koha-deploy/mysql
@@ -452,7 +458,6 @@ koha-es-1      koha-local-es:8.19.6    Up (healthy)
 koha-rabbitmq-1 koha-local-rabbitmq    Up (healthy)
 koha-memcache-1 koha-local-memcached   Up
 koha-koha-1    <external-image>        Up (healthy)
-koha-tunnel-1  cloudflare/cloudflared  Up
 ```
 
 ### Step 3: Застосувати live-конфіги
@@ -468,13 +473,10 @@ bash scripts/bootstrap-live-configs.sh --all
 
 ### Step 4: Отримати доступ до OPAC / Intranet
 
-**Локально (без Cloudflare Tunnel):**
+**Локально через Traefik gateway (Host header):**
 ```bash
-# OPAC (public catalog)
-http://localhost:8080/
-
-# Intranet (staff interface)  – потребує входу
-http://localhost:8081/
+curl -I -H 'Host: library.pinokew.buzz' http://127.0.0.1:8080/
+curl -I -H 'Host: koha.pinokew.buzz' http://127.0.0.1:8080/
 ```
 
 **Credentials:**
@@ -772,17 +774,18 @@ docker compose exec koha koha-elasticsearch-indexer --rebuild
 docker system df
 ```
 
-### Cloudflare Tunnel не підключиться
+### External Tunnel / Traefik routing issues
 
 ```bash
-# Перевірити токен
-docker compose logs tunnel | grep -i error
+# Перевірити, що Koha healthy
+docker compose ps koha
 
-# Перевірити connectivity
-docker compose exec tunnel cloudflared tunnel info
+# Перевірити Traefik host routing локально
+curl -I -H 'Host: library.pinokew.buzz' http://127.0.0.1:8080/
+curl -I -H 'Host: koha.pinokew.buzz' http://127.0.0.1:8080/
 
-# Restart tunnel
-docker compose restart tunnel
+# Перевірити real client IP в Apache access log
+docker compose exec koha tail -n 20 /var/log/koha/apache/other_vhosts_access.log
 ```
 
 ### Недостатньо місця на диску
@@ -816,7 +819,7 @@ ls -lh $(docker inspect koha | jq -r '.[0].LogPath' | xargs dirname)
 
 ### Для розробленння та fork'ів
 
-- **README.example.md** — template для новых проектів (не редагувати)
+- **archive/README.example.md** — template для новых проектів (не редагувати)
 - **.github/workflows/ci-cd-checks.yml** — CI/CD логіка
 
 ### Зовнішні ресурси

@@ -4,9 +4,19 @@ on:
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - '**.md'
+      - '.env.example'
+      - '.gitignore'
+      - 'archive/**'
   push:
     branches:
       - main
+    paths-ignore:
+      - '**.md'
+      - '.env.example'
+      - '.gitignore'
+      - 'archive/**'
   workflow_dispatch:
 
 permissions:

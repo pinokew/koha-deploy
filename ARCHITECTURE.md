@@ -1,6 +1,6 @@
 # Deploy Repo Architecture (Koha)
 
-Дата оновлення: 2026-03-03
+Дата оновлення: 2026-03-13
 
 ## 1) Призначення репозиторію
 
@@ -18,28 +18,52 @@
 3. `es` (локальна збірка з `elasticsearch/Dockerfile`)
 4. `rabbitmq` (локальна збірка з `rabbitmq/Dockerfile`)
 5. `memcached` (локальна збірка з `memcached/Dockerfile`)
-6. `tunnel` (`cloudflared`, зовнішній доступ)
+
+Зовнішній доступ:
+1. External Cloudflare Tunnel (окремий стек/інфраструктура)
+2. Traefik gateway (`/home/pinokew/Traefik`)
 
 Ключове:
-- `koha` host-ports вимкнені; зовнішній доступ іде через Cloudflare Tunnel.
-- Sidecar сервіси `es/rabbitmq/memcached` будуються локально у deploy-потоці.
+- локальний сервіс `tunnel` видалено з `koha-deploy`;
+- `koha` host-ports вимкнені; зовнішній доступ іде через `Cloudflare Tunnel -> Traefik -> Koha`;
+- sidecar сервіси `es/rabbitmq/memcached` будуються локально у deploy-потоці.
 
 ## 3) Мережева модель
 
-1. Єдина docker-мережа: `kohanet`.
-2. Міжсервісний доступ тільки внутрішніми DNS-іменами (`db`, `es`, `rabbitmq`, `memcached`).
-3. Публічний трафік до Koha не відкривається напряму через host ports.
+1. Внутрішня мережа Koha-стеку: `koha-deploy_kohanet`.
+2. Traefik підключається до `koha-deploy_kohanet` як gateway.
+3. Міжсервісний доступ тільки внутрішніми DNS-іменами (`db`, `es`, `rabbitmq`, `memcached`).
+4. Публічний трафік до Koha не відкривається напряму через host ports.
 
 ## 4) Конфігураційна модель
 
 1. SSOT runtime-конфігів: `.env` + `.env.example` + `docker-compose.yaml`.
-2. Live-конфіг Koha (`koha-conf.xml`) патчиться через модульні скрипти `scripts/patch/*`.
-3. Оркестратор патчів: `scripts/bootstrap-live-configs.sh`.
-4. Патч-флоу підтримує:
-- первинний bootstrap чистого інстансу;
-- selective rerun окремих модулів.
+2. Домени оркеструються як code через:
+   - `KOHA_OPAC_SERVERNAME`
+   - `KOHA_INTRANET_SERVERNAME`
+3. Live-конфіг Koha (`koha-conf.xml`) патчиться через модульні скрипти `scripts/patch/*`.
+4. Оркестратор патчів: `scripts/bootstrap-live-configs.sh`.
 
-## 5) Дані і томи
+Актуальні модулі bootstrap:
+- `timezone`
+- `trusted-proxies`
+- `memcached`
+- `message-broker`
+- `smtp`
+- `domain-prefs`
+- `verify`
+
+## 5) Trusted proxy / real IP модель
+
+Щоб не втрачати client IP у ланцюжку `Cloudflare -> Traefik -> Apache`:
+1. У `koha` контейнері активується `mod_remoteip` на старті.
+2. Монтується керований файл `apache/remoteip.conf`.
+3. У `koha-conf.xml` патчиться `<koha_trusted_proxies>` через env `KOHA_TRUSTED_PROXIES`.
+
+Результат:
+- Apache access logs фіксують реальний IP клієнта (з `CF-Connecting-IP`), а не IP внутрішнього Traefik.
+
+## 6) Дані і томи
 
 Зовнішні bind-path томи задаються в `.env`:
 1. `VOL_DB_PATH`
@@ -48,8 +72,7 @@
 4. `VOL_KOHA_DATA`
 5. `VOL_KOHA_LOGS`
 
-
-## 6) Операційні скрипти
+## 7) Операційні скрипти
 
 Основні скрипти:
 1. `scripts/verify-env.sh` — валідація env-моделі.
@@ -60,7 +83,7 @@
 6. `scripts/collect-docker-logs.sh` — централізований експорт docker logs.
 7. `scripts/install-collect-logs-timer.sh` + `systemd/*.service|*.timer` — плановий збір логів.
 
-## 7) CI/CD архітектура
+## 8) CI/CD архітектура
 
 Workflow: `.github/workflows/ci-cd-checks.yml`
 
@@ -83,20 +106,22 @@ Workflow: `.github/workflows/ci-cd-checks.yml`
 6. `bootstrap-live-configs.sh`
 7. health-check `koha`
 
-## 8) Правила і обмеження
+## 9) Правила і обмеження
 
 1. Секрети не комітяться в git.
 2. Постійні зміни робляться через deploy-репо (compose/env/scripts), а не ручними правками в контейнері.
 3. Для backup/restore використовуються тільки `scripts/backup.sh` і `scripts/restore.sh`.
 4. Зміни фіксуються в активному changelog-томі (`CHANGELOGS/`).
 
-## 9) Структура репо (актуальна)
+## 10) Структура репо (актуальна)
 
 ```text
 koha-deploy/
   .github/workflows/ci-cd-checks.yml
   docker-compose.yaml
   .env.example
+  apache/
+    remoteip.conf
   scripts/
     backup.sh
     restore.sh
@@ -105,11 +130,12 @@ koha-deploy/
     test-smtp.sh
     patch/
       patch-koha-conf-xml-*.sh
+      patch-koha-sysprefs-domain.sh
   systemd/
     koha-deploy-collect-logs.service
     koha-deploy-collect-logs.timer
   CHANGELOG.md
   CHANGELOGS/
-  NEW_CHAT_START_HERE.md
+  AGENTS.md
   ROADMAP_PROD.md
 ```

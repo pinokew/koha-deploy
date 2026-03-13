@@ -21,7 +21,7 @@ Usage: ./scripts/bootstrap-live-configs.sh [options]
 
 Module selection:
   --all                 Run all modules (default if none selected)
-  --modules LIST        Comma-separated list: timezone,memcached,message-broker,smtp,verify
+  --modules LIST        Comma-separated list: timezone,trusted-proxies,memcached,message-broker,smtp,domain-prefs,verify
   --module NAME         Repeatable module selector (same names as above)
   --list-modules        Print available modules and exit
 
@@ -39,12 +39,14 @@ Examples:
 USAGE
 }
 
-MODULE_ORDER=(timezone memcached message-broker smtp verify)
+MODULE_ORDER=(timezone trusted-proxies memcached message-broker smtp domain-prefs verify)
 declare -A MODULE_SCRIPT=(
   [timezone]="patch-koha-conf-xml-timezone.sh"
+  [trusted-proxies]="patch-koha-conf-xml-trusted-proxies.sh"
   [memcached]="patch-koha-conf-xml-memcached.sh"
   [message-broker]="patch-koha-conf-xml-message-broker.sh"
   [smtp]="patch-koha-conf-xml-smtp.sh"
+  [domain-prefs]="patch-koha-sysprefs-domain.sh"
   [verify]="patch-koha-conf-xml-verify.sh"
 )
 
@@ -181,7 +183,7 @@ fi
 
 if ${needs_restart}; then
   log "Restarting koha to apply patched live config"
-  docker compose up -d koha >/dev/null
+  docker compose -f "${PROJECT_ROOT}/docker-compose.yaml" --env-file "${ENV_FILE}" up -d koha >/dev/null
   log "Restart complete"
 else
   log "No patch module requiring restart was run"
